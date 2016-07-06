@@ -1,0 +1,5 @@
+suites:
+    main:
+        namespace: Homer\Logistics\Kuaidi100
+        psr4_prefix: Homer\Logistics\Kuaidi100
+        src_path: src
