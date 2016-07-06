@@ -13,10 +13,10 @@ use GuzzleHttp\ClientInterface;
 class Service
 {
     /**
-     * base url for sending short message
+     * 公司编号
      * @var string
      */
-    const SUBSCRIBE_URL = 'http://poll.kuaidi100.com/poll';
+    private $name;
 
     /**
      * 授权码
@@ -37,27 +37,17 @@ class Service
      */
     private $client;
 
-
-    private static $SUBSCRIBE_CODES = [
-        '200' => '提交成功',
-	    '701' => '快递公司暂不支持',  // 拒绝订阅的快递公司
-	    '700' => '订阅数据错误（如不支持的快递公司、单号为空、单号超长等）或错误的回调地址',
-	    '702' => '识别不到该单号对应的快递公司',
-	    '600' => '授权KEY非法',
-        '601' => '授权KEY已过期',
-        '500' => '快递100服务器错误',
-        '501' => '重复订阅'
-    ];
-
     /**
+     * @param string $name     快递100分配的公司编号(不是快递公司编号)
      * @param string $key      授权码
      * @param array $options   some more configurations:
      *                         - notification_url  url to receive notification
      *                         - salt              salt for response signature verification
      * @param ClientInterface $client   client used to sending http request
      */
-    public function __construct($key, $options = [], ClientInterface $client = null)
+    public function __construct($name, $key, $options = [], ClientInterface $client = null)
     {
+        $this->name = $name;
         $this->key = $key;
         $this->options = $options;
 
@@ -80,31 +70,18 @@ class Service
      */
     public function track($waybillNo, array $options = [])
     {
-        $this->validateTrackRequest($waybillNo, $options);
+        $this->validateWaybillNo($waybillNo);
 
         $notificationUrl = array_get($options, 'notification_url', array_get($this->options, 'notification_url'));
         return $this->subscribeTracking($waybillNo, $notificationUrl, $options);
     }
 
-    /*
-     * validate params for tracking
-     */
-    private function validateTrackRequest($waybillNo, array $options = [])
-    {
-        // waybill number can not be neither blank nor larger than 32 in length
-        if (empty($waybillNo) || strlen($waybillNo) > 32) {
-            throw new \InvalidArgumentException('错误的运单号');
-        }
-    }
-
     private function subscribeTracking($waybillNo, $notificationUrl, array $options = [])
     {
         // send request for track subscription
-        $response = $this->client->request('POST', self::SUBSCRIBE_URL, [
+        $response = $this->client->request('POST', 'http://poll.kuaidi100.com/poll', [
             RequestOptions::FORM_PARAMS => $this->buildRequestForTracking($waybillNo, $notificationUrl, $options)
         ]);
-
-        /* @var $response \GuzzleHttp\Psr7\Response */
         if ($response->getStatusCode() != 200) {
             throw new \Exception('快递100服务异常');
         }
@@ -119,10 +96,7 @@ class Service
             return true;
         }
 
-        // parse the message to show error
-        $message = !empty($parsed->message) ? $parsed->message : array_get(self::$SUBSCRIBE_CODES, $parsed->returnCode,
-                                                                           sprintf('错误: %s', $parsed->returnCode));
-        throw new \Exception($message, $parsed->returnCode);
+        throw new \Exception($parsed->message, $parsed->returnCode);
     }
 
     private function buildRequestForTracking($waybillNo, $notificationUrl, array $options = [])
@@ -182,7 +156,6 @@ class Service
         $reportedAsFake = $parsed->status == 'abort' && strpos($parsed->message, '3天') > 0 && empty($parsed->comNew);
 
         // TODO: handle non-blank comNew, autoCheck + polling status
-
 
         $handled = $callback((object)array_filter([
             'tracking' => (object)[
@@ -255,6 +228,65 @@ class Service
         }
 
         return $parsed;
+    }
+
+    /**
+     * (sync) query logistics inforamtion
+     *
+     * @param string $company
+     * @param $waybillNo
+     * @param $from
+     * @param $to
+     * @return object
+     * @throws \Exception
+     */
+    public function query($company, $waybillNo, $from, $to)
+    {
+        $this->validateWaybillNo($waybillNo);
+
+        // send request
+        $response = $this->client->request('POST', 'http://poll.kuaidi100.com/poll/query.do', [
+            RequestOptions::FORM_PARAMS => $this->buildRequestForQuery($company, $waybillNo, $from, $to)
+        ]);
+        if ($response->getStatusCode() != 200) {
+            throw new \Exception('快递100服务异常');
+        }
+
+        return $this->parseQueryResponse((string)$response->getBody());
+    }
+
+    private function buildRequestForQuery($company, $waybillNo, $from, $to)
+    {
+        $params = [ 'com' => $company, 'num' => $waybillNo, 'from' => $from, 'to' => $to ];
+        $params['sign'] = md5(json_encode($params) . $this->key . $this->name);
+        $params['customer'] = $this->name;
+
+        return $params;
+    }
+
+    private function parseQueryResponse($response)
+    {
+        $parsed = safe_json_decode($response);
+        if ($parsed == false) {
+            throw new \Exception('快递100服务异常: ' . $response);
+        }
+
+        if (isset($parsed->result) && $parsed->result == false) { // something wrong
+            throw new \Exception($parsed->message, $parsed->returnCode);
+        }
+
+        return $this->parseForLogistics($parsed);
+    }
+
+    /*
+     * validate params for tracking
+     */
+    private function validateWaybillNo($waybillNo)
+    {
+        // waybill number can not be neither blank nor larger than 32 in length
+        if (empty($waybillNo) || strlen($waybillNo) > 32) {
+            throw new \InvalidArgumentException('错误的运单号');
+        }
     }
 
     /*
