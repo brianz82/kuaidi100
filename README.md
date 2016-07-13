@@ -9,7 +9,7 @@ use Homer\Logistics\Kuaidi100\Service as LogisticsService;
 
 $service = new LogisticsService(<YOUR_COMPANY_NAME>, <KEY>);
 // - or the full version
-// $service = new YunbaPushService(<YOUR_COMPANY_NAME>, <KEY>, $optionsOfService, $instanceOfClient);
+// $service = new LogisticsService(<YOUR_COMPANY_NAME>, <KEY>, $optionsOfService, $instanceOfClient);
 
 // to start tracking waybill
 $service->track(<waybill#>, $options);
